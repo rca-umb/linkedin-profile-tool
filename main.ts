@@ -44,7 +44,7 @@ async function fetchLinkedInProfile(username: string, key: string) {
 		noteContent.body += '\n### Education';
 		for (const school of result.educations) {
 			noteContent.body += (
-				`\n${school.fieldOfStudy} ${school.degree} at [[${school.schoolName}]], ${school.end.year}.`
+				`\n${school.fieldOfStudy} ${school.degree} from [[${school.schoolName}]], ${school.end.year}.`
 			);
 		}
 		return {
