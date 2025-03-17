@@ -1,21 +1,73 @@
 import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import { title } from 'process';
 
-// Remember to rename these classes and interfaces!
-
-interface MyPluginSettings {
-	mySetting: string;
+interface LinkedInProfileToolSettings {
+	apiKey: string;
 }
 
-const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: 'default'
+const DEFAULT_SETTINGS: LinkedInProfileToolSettings = {
+	apiKey: ''
 }
 
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+async function fetchLinkedInProfile(username: string, key: string) {
+	const url = `https://linkedin-data-api.p.rapidapi.com/?username=${username}`;
+	const options = {
+		method: 'GET',
+		headers: {
+			'x-rapidapi-key': `${key}`,
+			'x-rapidapi-host': 'linkedin-data-api.p.rapidapi.com'
+		}
+	};
+
+	try {
+		const response = await fetch(url, options);
+		const result = await response.json();
+		let noteContent = {
+			title: `${result.firstName} ${result.lastName}`,
+			body: ''
+		};
+		noteContent.body = (
+			`## Background\n` +
+			`### Work`
+		);
+		for (const job of result.position) {
+			noteContent.body += (
+				`\n**${job.multiLocaleTitle.en_US}** at [[${job.multiLocaleCompanyName.en_US}]] from ${job.start.month}/${job.start.year}`
+			);
+			if (job.end.year == 0) { // currently working at this position
+				noteContent.body += '.'
+			} else {
+				noteContent.body += ` to ${job.end.month}/${job.end.year}.`
+			}
+
+		}
+		noteContent.body += '\n### Education';
+		for (const school of result.educations) {
+			noteContent.body += (
+				`\n${school.fieldOfStudy} ${school.degree} at [[${school.schoolName}]], ${school.end.year}.`
+			);
+		}
+		return {
+			code: 0,
+			details: noteContent
+		};
+	
+	} catch (error) {
+		console.log(error);
+		return {
+			code: 1,
+			details: error
+		};
+	}
+}
+
+export default class LinkedInProfileTool extends Plugin {
+	settings: LinkedInProfileToolSettings;
 
 	async onload() {
 		await this.loadSettings();
 
+		/* might want to use this later
 		// This creates an icon in the left ribbon.
 		const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
 			// Called when the user clicks the icon.
@@ -23,11 +75,8 @@ export default class MyPlugin extends Plugin {
 		});
 		// Perform additional things with the ribbon
 		ribbonIconEl.addClass('my-plugin-ribbon-class');
-
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status Bar Text');
-
+		*/
+		/* might need this later
 		// This adds a simple command that can be triggered anywhere
 		this.addCommand({
 			id: 'open-sample-modal-simple',
@@ -36,15 +85,26 @@ export default class MyPlugin extends Plugin {
 				new SampleModal(this.app).open();
 			}
 		});
+		*/
 		// This adds an editor command that can perform some operation on the current editor instance
 		this.addCommand({
-			id: 'sample-editor-command',
-			name: 'Sample editor command',
+			id: 'linkedin-profile-tool-create-from-url',
+			name: 'Create a new note from LinkedIn profile URL',
+			/* will use this later
 			editorCallback: (editor: Editor, view: MarkdownView) => {
-				console.log(editor.getSelection());
-				editor.replaceSelection('Sample Editor Command');
+				const selection = editor.getSelection();
+				// name of active file is returned with .md extension
+				const fileName = this.app.workspace.getActiveFile()?.name.slice(0, -3);
+
 			}
+			*/
+			callback: () => {
+				new FromURLModal(this.app, this.settings.apiKey).open();
+			}
+
 		});
+
+		/* might need this added checking later
 		// This adds a complex command that can check whether the current state of the app allows execution of the command
 		this.addCommand({
 			id: 'open-sample-modal-complex',
@@ -64,18 +124,10 @@ export default class MyPlugin extends Plugin {
 				}
 			}
 		});
+		*/
 
 		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
-
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			console.log('click', evt);
-		});
-
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
+		this.addSettingTab(new LinkedInProfileToolSettingTab(this.app, this));
 	}
 
 	onunload() {
@@ -91,14 +143,47 @@ export default class MyPlugin extends Plugin {
 	}
 }
 
-class SampleModal extends Modal {
-	constructor(app: App) {
+class FromURLModal extends Modal {
+	apiKey: string;
+
+	constructor(app: App, apiKey: string) {
 		super(app);
+		this.app = app;
+		this.apiKey = apiKey;
 	}
 
 	onOpen() {
-		const {contentEl} = this;
-		contentEl.setText('Woah!');
+		const contentEl = this;
+		this.setTitle('Create a new note from a LinkedIn profile URL');
+		let profileURL = '';
+		new Setting(this.contentEl)
+			.setName('Profile URL')
+			.addText(text =>
+				text.onChange(value => {
+					profileURL = value;
+				})
+			);
+		new Setting(this.contentEl)
+			.addButton(btn => btn
+				.setButtonText('Create')
+				.setCta()
+				.onClick(async () => {
+					const profile = await fetchLinkedInProfile(profileURL, this.apiKey);
+					if (profile.code == 0) {
+						const saveFolder = this.app.vault.getRoot()
+						try {
+							this.app.vault.create(`${saveFolder.path}/${profile.details.title}.md`, profile.details.body);
+							new Notice(`Note successfully created for ${profile.details.title}`);
+						}
+						catch (error) {
+							console.log(error);
+						}
+					} else {
+						new Notice(`Error fetching profile data: ${profile.details}`, 0);
+					}
+					this.close();
+				})
+			);
 	}
 
 	onClose() {
@@ -107,10 +192,10 @@ class SampleModal extends Modal {
 	}
 }
 
-class SampleSettingTab extends PluginSettingTab {
-	plugin: MyPlugin;
+class LinkedInProfileToolSettingTab extends PluginSettingTab {
+	plugin: LinkedInProfileTool;
 
-	constructor(app: App, plugin: MyPlugin) {
+	constructor(app: App, plugin: LinkedInProfileTool) {
 		super(app, plugin);
 		this.plugin = plugin;
 	}
@@ -121,13 +206,13 @@ class SampleSettingTab extends PluginSettingTab {
 		containerEl.empty();
 
 		new Setting(containerEl)
-			.setName('Setting #1')
-			.setDesc('It\'s a secret')
+			.setName('API Key')
+			.setDesc('RapidAPI API key. Must have a valid subscription to LinkedIn Data API.')
 			.addText(text => text
 				.setPlaceholder('Enter your secret')
-				.setValue(this.plugin.settings.mySetting)
+				.setValue(this.plugin.settings.apiKey)
 				.onChange(async (value) => {
-					this.plugin.settings.mySetting = value;
+					this.plugin.settings.apiKey = value;
 					await this.plugin.saveSettings();
 				}));
 	}

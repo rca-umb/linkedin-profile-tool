@@ -1,7 +1,7 @@
 {
-	"name": "obsidian-sample-plugin",
-	"version": "1.0.0",
-	"description": "This is a sample plugin for Obsidian (https://obsidian.md)",
+	"name": "linkedin-profile-tool",
+	"version": "0.1.0",
+	"description": "Plugin for Obsidian (https://obsidian.md) that pulls information from LinkedIn profiles.",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
