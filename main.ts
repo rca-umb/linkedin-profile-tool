@@ -1,5 +1,4 @@
 import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
-import { title } from 'process';
 
 interface LinkedInProfileToolSettings {
 	apiKey: string;
@@ -14,7 +13,7 @@ async function fetchLinkedInProfile(username: string, key: string) {
 	const options = {
 		method: 'GET',
 		headers: {
-			'x-rapidapi-key': `${key}`,
+			'x-rapidapi-key': key,
 			'x-rapidapi-host': 'linkedin-data-api.p.rapidapi.com'
 		}
 	};
@@ -54,6 +53,52 @@ async function fetchLinkedInProfile(username: string, key: string) {
 	
 	} catch (error) {
 		console.log(error);
+		return {
+			code: 1,
+			details: error
+		};
+	}
+}
+
+async function searchLinkedInProfiles(firstName: string, lastName: string, keywords: string, key: string) {
+	let params = '';
+	if (keywords) {params += `keywords=${keywords}&`;}
+	if (firstName) {params += `firstName=${firstName}&`;}
+	if (lastName) {params += `lastName=${lastName}`;}
+
+	// this function shouldn't be called with no parameters, but just in case lets not waste an api call
+	if (params === '') {
+		return {
+			code: 1,
+			details: 'No search parameters provided.'
+		}
+	}
+
+	const url = `https://linkedin-data-api.p.rapidapi.com/search-people?${params}`;
+	const options = {
+		method: 'GET',
+		headers: {
+			'x-rapidapi-key': key,
+			'x-rapidapi-host': 'linkedin-data-api.p.rapidapi.com'
+		}
+	};
+
+	try {
+		const response = await fetch(url, options);
+		const result = await response.json();
+		console.log(result);
+		if (result.success) {
+			return {
+				code: 0,
+				details: result.data.items
+			};
+		}
+		return {
+			code: 1,
+			details: result.message
+		};
+	} catch (error) {
+		console.error(error);
 		return {
 			code: 1,
 			details: error
@@ -104,6 +149,15 @@ export default class LinkedInProfileTool extends Plugin {
 
 		});
 
+		// Open a modal to search for a profile to pull data from
+		this.addCommand({
+			id: 'linkedin-profile-tool-create-from-search',
+			name: 'Search for a LinkedIn profile to create a new note from',
+			callback: () => {
+				new SearchProfilesModal(this.app, this.settings.apiKey).open();
+			}
+		})
+
 		/* might need this added checking later
 		// This adds a complex command that can check whether the current state of the app allows execution of the command
 		this.addCommand({
@@ -153,7 +207,6 @@ class FromURLModal extends Modal {
 	}
 
 	onOpen() {
-		const contentEl = this;
 		this.setTitle('Create a new note from a LinkedIn profile URL');
 		let profileURL = '';
 		new Setting(this.contentEl)
@@ -192,6 +245,110 @@ class FromURLModal extends Modal {
 	}
 }
 
+class SearchProfilesModal extends Modal {
+	apiKey: string;
+
+	constructor(app: App, apiKey: string) {
+		super(app);
+		this.app = app;
+		this.apiKey = apiKey;
+	}
+
+	onOpen() {
+		this.setTitle('Search for a LinkedIn profile to create a new note from');
+		let personFirstName = '';
+		let personLastName = '';
+		let personDetails = '';
+		new Setting(this.contentEl)
+			.setName('First name of user')
+			.addText(text => 
+				text.onChange(value => {
+					personFirstName = value;
+				})
+			);
+		new Setting(this.contentEl)
+			.setName('Last name of user')
+			.addText(text => 
+				text.onChange(value => {
+					personLastName = value;
+				})
+			);
+		new Setting(this.contentEl)
+			.setName('Details of user')
+			.addTextArea(text =>
+				text.onChange(value => {
+					personDetails = value;
+				})
+			);
+		new Setting(this.contentEl)
+			.addButton(btn => btn
+				.setButtonText('Search')
+				.setCta()
+				.onClick(async () => {
+					if (personFirstName === '' && personLastName === '' && personDetails === '') {
+						new Notice('Please provide at least one search parameter.');
+						return;
+					}
+					const results = await searchLinkedInProfiles(personFirstName, personLastName, personDetails, this.apiKey);
+					if (results.code == 0) {
+						new PickProfileModal(this.app, this.apiKey, results.details).open();
+					}
+					this.close();
+				})
+			);
+	}
+
+	onClose() {
+		this.contentEl.empty();
+	}
+}
+
+class PickProfileModal extends Modal {
+	apiKey: string;
+	searchResults: any;
+
+	constructor(app: App, apiKey: string, searchResults: Array<any>) {
+		super(app);
+		this.app = app;
+		this.apiKey = apiKey;
+		this.searchResults = searchResults;
+	}
+
+	onOpen(){
+		this.setTitle('Select which profile to create a new note from');
+		console.log(this.searchResults);
+		for (const result of this.searchResults) {
+			new Setting(this.contentEl)
+				.setName(`${result.fullName}`)
+				.setDesc(`${result.location}\n${result.headline}\n${result.summary}`)
+				.addButton(btn => btn
+					.setButtonText('Chose Profile')
+					.setCta()
+					.onClick(async () => {
+						const profile = await fetchLinkedInProfile(result.username, this.apiKey);
+						if (profile.code == 0) {
+							const saveFolder = this.app.vault.getRoot()
+							try {
+								this.app.vault.create(`${saveFolder.path}/${profile.details.title}.md`, profile.details.body);
+								new Notice(`Note successfully created for ${profile.details.title}`);
+							}
+							catch (error) {
+								console.log(error);
+							}
+						} else {
+							new Notice(`Error fetching profile data: ${profile.details}`, 0);
+						}
+						this.close();
+					})
+				);
+		}
+	}
+
+	onClose() {
+		this.contentEl.empty();
+	}
+}
+
 class LinkedInProfileToolSettingTab extends PluginSettingTab {
 	plugin: LinkedInProfileTool;
 
@@ -209,7 +366,7 @@ class LinkedInProfileToolSettingTab extends PluginSettingTab {
 			.setName('API Key')
 			.setDesc('RapidAPI API key. Must have a valid subscription to LinkedIn Data API.')
 			.addText(text => text
-				.setPlaceholder('Enter your secret')
+				.setPlaceholder('Enter your API key')
 				.setValue(this.plugin.settings.apiKey)
 				.onChange(async (value) => {
 					this.plugin.settings.apiKey = value;
