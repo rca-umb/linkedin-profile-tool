@@ -1,4 +1,5 @@
 import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import testProfile from './test_format.json';
 
 interface LinkedInAPI {
 	name: string;
@@ -8,16 +9,25 @@ interface LinkedInAPI {
 
 interface LinkedInProfileToolSettings {
 	apiKey: string;
-	apiProvider: LinkedInAPI;
+	apiHost: string;
+	apiHostDetails: Record<string, LinkedInAPI>;
 }
 
 const DEFAULT_SETTINGS: LinkedInProfileToolSettings = {
 	apiKey: '',
-	apiProvider: {
-		name: 'RockAPIs Real-Time LinkedIn Scraper API',
-		searchEndpoint: 'https://linkedin-data-api.p.rapidapi.com/search-people?',
-		profileEndpoint: 'https://linkedin-data-api.p.rapidapi.com/?username='
-	} 
+	apiHost: 'rockapi',
+	apiHostDetails: {
+		'rockapi': {
+			name: 'RockAPIs Real-Time LinkedIn Scraper',
+			searchEndpoint: 'https://linkedin-data-api.p.rapidapi.com/search-people?',
+			profileEndpoint: 'https://linkedin-data-api.p.rapidapi.com/?username='
+		},
+		'rockapi-cheap': {
+			name: '(cheap) RockAPIs Real-Time LinkedIn Scraper',
+			searchEndpoint: 'https://linkedin-data-scraper.p.rapidapi.com/search?',
+			profileEndpoint: 'https://linkedin-data-scraper.p.rapidapi.com/profile?'
+		}
+	}
 }
 
 async function fetchLinkedInProfile(username: string, key: string, endpoint: string) {
@@ -31,16 +41,22 @@ async function fetchLinkedInProfile(username: string, key: string, endpoint: str
 	};
 
 	try {
-		const response = await fetch(url, options);
-		const result = await response.json();
+		let result;
+		if (endpoint === '') {
+			result = testProfile;
+		} else {
+			const response = await fetch(url, options);
+			result = await response.json();
+		}
+		// response structure
 		let noteContent = {
 			title: `${result.firstName} ${result.lastName}`,
 			body: ''
 		};
-
+		// work experience
 		noteContent.body = (
 			`## Background\n` +
-			`### Work`
+			`### Work\n`
 		);
 		let linkedOrgs: string[] = [];
 		for (const job of result.position) {
@@ -48,10 +64,10 @@ async function fetchLinkedInProfile(username: string, key: string, endpoint: str
 			if (job.employmentType == 'Internship') {
 				jobTitle.contains('Intern') ? jobTitle = jobTitle : jobTitle += ' Intern';
 			}
-			let jobNotes = ((job.location != '') ? `\n- ${job.location}\n` : '');
+			let jobNotes = ((job.location != '') ? `\n- ${job.location}` : '');
 			if (job.description != '') {
 				const jobDesc = job.description.split('\n');
-				jobNotes += '\n- ' + jobDesc.join('\n- ');
+				jobNotes += '- ' + jobDesc.join('\n- ') + '\n';
 			}
 			noteContent.body = (job.end.year == 0) ? ( // curently working at this position
 				`**${jobTitle}** at ` + (
@@ -59,26 +75,26 @@ async function fetchLinkedInProfile(username: string, key: string, endpoint: str
 					? `${job.multiLocaleCompanyName.en_US}` : `[[${job.multiLocaleCompanyName.en_US}]]`
 				) + ' since ' + (
 					(job.start.month != 0) ? `${job.start.month}/` : '' // only include month if it is present
-				) + `${job.start.year}.\n` + jobNotes +
+				) + `${job.start.year}.` + jobNotes + '\n' +
 				noteContent.body
 			) : ( // past position
 				noteContent.body +
-				`\n**${jobTitle}** at ` + (
+				`**${jobTitle}** at ` + (
 					(linkedOrgs.contains(job.multiLocaleCompanyName.en_US)) 
 					? `${job.multiLocaleCompanyName.en_US}` : `[[${job.multiLocaleCompanyName.en_US}]]` 
 				) + ' from ' + (
 					(job.start.month != 0) ? `${job.start.month}/` : '' 
 				) + `${job.start.year} to ` + (
 					(job.end.month != 0) ? `${job.end.month}/` : '' 
-				) + `${job.end.year}.` + jobNotes
+				) + `${job.end.year}.` + jobNotes + '\n'
 			);
 			linkedOrgs.push(job.multiLocaleCompanyName.en_US);
 		}
-
-		noteContent.body += '\n### Education';
+		// educational experience
+		noteContent.body += '### Education\n';
 		for (const school of result.educations) {
 			noteContent.body += (
-				`\n${school.fieldOfStudy} `+ (
+				`${school.fieldOfStudy} `+ (
 					school.degree.contains('-')
 					? `${school.degree.split('-')[1].trim()}` : `${school.degree}` 
 				) + ' from ' + (
@@ -86,24 +102,24 @@ async function fetchLinkedInProfile(username: string, key: string, endpoint: str
 					? `${school.schoolName}` : `[[${school.schoolName}]]`
 				) + ( // only include grad year if it is present
 					(school.end.year != 0) ? `, ${school.end.year}.` : '.' 
-				)
+				) + '\n'
 			);
 			if (school.description != '') {
 				const schoolNotes = school.description.split('\n');
-				noteContent.body += '\n- ' + schoolNotes.join('\n- ');
+				noteContent.body += '- ' + schoolNotes.join('\n- ') + '\n';
 			}
 			if (school.activities != '') {
 				const schoolActivities = school.activities.split('\n');
-				noteContent.body += '\n- ' + schoolActivities.join('\n- ');
+				noteContent.body += '- ' + schoolActivities.join('\n- ') + '\n';
 			}
 			linkedOrgs.push(school.schoolName);
 		}
-
+		// bottom of note
 		noteContent.body += '\n---\n#people';
-
+		// top of note
 		noteContent.body = (
 			(('headline' in result) ? `*${result.headline}*\n` : '') +
-			(('summary' in result) ? `${result.summary}\n` : '') +
+			(('summary' in result) ? `${result.summary}\n` : '\n') +
 			noteContent.body
 		);
 
@@ -217,9 +233,28 @@ export default class LinkedInProfileTool extends Plugin {
 			callback: () => {
 				new SearchProfilesModal(
 					this.app, this.settings.apiKey, 
-					this.settings.apiProvider.profileEndpoint, this.settings.apiProvider.searchEndpoint
+					this.settings.apiHostDetails[this.settings.apiHost].profileEndpoint, 
+					this.settings.apiHostDetails[this.settings.apiHost].searchEndpoint
 				).open();
 			}
+		})
+
+		// Tests the format by pulling from a test file
+		this.addCommand({
+			id: 'linkedin-profile-tool-create-from-test',
+			name: 'Create a new note from test profile (doesn\'t use API credits)',
+			callback: async () => {
+				const profile = await fetchLinkedInProfile('', '', '');
+				const saveFolder = this.app.vault.getRoot();
+				try {
+					this.app.vault.create(`${saveFolder.path}/${profile.details.title}.md`, profile.details.body);
+				}
+				catch (error) {
+					console.log(error);
+				}
+				new Notice(`Note successfully created for ${profile.details.title}`);
+			},
+
 		})
 
 		/* might need this added checking later
@@ -444,6 +479,20 @@ class LinkedInProfileToolSettingTab extends PluginSettingTab {
 				.setValue(this.plugin.settings.apiKey)
 				.onChange(async (value) => {
 					this.plugin.settings.apiKey = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('API Provider')
+			.setDesc('Select the API host you are using from RapidAPI.')
+			.addDropdown(dropdown => dropdown
+				.addOptions({
+					'rockapi': this.plugin.settings.apiHostDetails['rockapi'].name,
+					'rockapi-cheap': this.plugin.settings.apiHostDetails['rockapi-cheap'].name
+				})
+				.setValue(this.plugin.settings.apiHost)
+				.onChange(async (value) => {
+					this.plugin.settings.apiHost = value;
 					await this.plugin.saveSettings();
 				}));
 	}
