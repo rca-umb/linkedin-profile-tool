@@ -29,22 +29,48 @@ async function fetchLinkedInProfile(username: string, key: string) {
 			`## Background\n` +
 			`### Work`
 		);
+		let linkedOrgs: string[] = [];
 		for (const job of result.position) {
-			noteContent.body += (
-				`\n**${job.multiLocaleTitle.en_US}** at [[${job.multiLocaleCompanyName.en_US}]] from ${job.start.month}/${job.start.year}`
-			);
-			if (job.end.year == 0) { // currently working at this position
-				noteContent.body += '.'
-			} else {
-				noteContent.body += ` to ${job.end.month}/${job.end.year}.`
+			let jobTitle = job.multiLocaleTitle.en_US;
+			if (job.employmentType == 'Internship') {
+				jobTitle.contains('Intern') ? jobTitle = jobTitle : jobTitle += ' Intern';
 			}
 
+			noteContent.body = (job.end.year == 0) ? ( // curently working at this position
+				`**${jobTitle}** at ` + (
+					(linkedOrgs.contains(job.multiLocaleCompanyName.en_US)) // only link company name on first occurance
+					? `${job.multiLocaleCompanyName.en_US}` : `[[${job.multiLocaleCompanyName.en_US}]]`
+				) + ' since ' + (
+					(job.start.month != 0) ? `${job.start.month}/` : '' // only include month if it is present
+				) + `${job.start.year}.\n` +
+				noteContent.body
+			) : ( // past position
+				noteContent.body +
+				`\n**${jobTitle}** at ` + (
+					(linkedOrgs.contains(job.multiLocaleCompanyName.en_US)) 
+					? `${job.multiLocaleCompanyName.en_US}` : `[[${job.multiLocaleCompanyName.en_US}]]` 
+				) + ' from ' + (
+					(job.start.month != 0) ? `${job.start.month}/` : '' 
+				) + `${job.start.year} to ` + (
+					(job.end.month != 0) ? `${job.end.month}/` : '' 
+				) + `${job.end.year}.`
+			);
+			linkedOrgs.push(job.multiLocaleCompanyName.en_US);
 		}
 		noteContent.body += '\n### Education';
 		for (const school of result.educations) {
 			noteContent.body += (
-				`\n${school.fieldOfStudy} ${school.degree} from [[${school.schoolName}]], ${school.end.year}.`
+				`\n${school.fieldOfStudy} `+ (
+					school.degree.contains('-')
+					? `${school.degree.split('-')[1].trim()}` : `${school.degree}` 
+				) + ' from ' + (
+					linkedOrgs.contains(school.schoolName) // only link school name on first occurance
+					? `${school.schoolName}` : `[[${school.schoolName}]]`
+				) + ( // only include grad year if it is present
+					(school.end.year != 0) ? `, ${school.end.year}.` : '.' 
+				)
 			);
+			linkedOrgs.push(school.schoolName);
 		}
 		return {
 			code: 0,
