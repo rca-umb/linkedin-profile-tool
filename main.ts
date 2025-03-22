@@ -1,15 +1,27 @@
 import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
 
+interface LinkedInAPI {
+	name: string;
+	searchEndpoint: string;
+	profileEndpoint: string;
+}
+
 interface LinkedInProfileToolSettings {
 	apiKey: string;
+	apiProvider: LinkedInAPI;
 }
 
 const DEFAULT_SETTINGS: LinkedInProfileToolSettings = {
-	apiKey: ''
+	apiKey: '',
+	apiProvider: {
+		name: 'RockAPIs Real-Time LinkedIn Scraper API',
+		searchEndpoint: 'https://linkedin-data-api.p.rapidapi.com/search-people?',
+		profileEndpoint: 'https://linkedin-data-api.p.rapidapi.com/?username='
+	} 
 }
 
-async function fetchLinkedInProfile(username: string, key: string) {
-	const url = `https://linkedin-data-api.p.rapidapi.com/?username=${username}`;
+async function fetchLinkedInProfile(username: string, key: string, endpoint: string) {
+	const url = `${endpoint}${username}`;
 	const options = {
 		method: 'GET',
 		headers: {
@@ -25,6 +37,7 @@ async function fetchLinkedInProfile(username: string, key: string) {
 			title: `${result.firstName} ${result.lastName}`,
 			body: ''
 		};
+
 		noteContent.body = (
 			`## Background\n` +
 			`### Work`
@@ -35,14 +48,18 @@ async function fetchLinkedInProfile(username: string, key: string) {
 			if (job.employmentType == 'Internship') {
 				jobTitle.contains('Intern') ? jobTitle = jobTitle : jobTitle += ' Intern';
 			}
-
+			let jobNotes = ((job.location != '') ? `\n- ${job.location}\n` : '');
+			if (job.description != '') {
+				const jobDesc = job.description.split('\n');
+				jobNotes += '\n- ' + jobDesc.join('\n- ');
+			}
 			noteContent.body = (job.end.year == 0) ? ( // curently working at this position
 				`**${jobTitle}** at ` + (
 					(linkedOrgs.contains(job.multiLocaleCompanyName.en_US)) // only link company name on first occurance
 					? `${job.multiLocaleCompanyName.en_US}` : `[[${job.multiLocaleCompanyName.en_US}]]`
 				) + ' since ' + (
 					(job.start.month != 0) ? `${job.start.month}/` : '' // only include month if it is present
-				) + `${job.start.year}.\n` +
+				) + `${job.start.year}.\n` + jobNotes +
 				noteContent.body
 			) : ( // past position
 				noteContent.body +
@@ -53,10 +70,11 @@ async function fetchLinkedInProfile(username: string, key: string) {
 					(job.start.month != 0) ? `${job.start.month}/` : '' 
 				) + `${job.start.year} to ` + (
 					(job.end.month != 0) ? `${job.end.month}/` : '' 
-				) + `${job.end.year}.`
+				) + `${job.end.year}.` + jobNotes
 			);
 			linkedOrgs.push(job.multiLocaleCompanyName.en_US);
 		}
+
 		noteContent.body += '\n### Education';
 		for (const school of result.educations) {
 			noteContent.body += (
@@ -70,8 +88,25 @@ async function fetchLinkedInProfile(username: string, key: string) {
 					(school.end.year != 0) ? `, ${school.end.year}.` : '.' 
 				)
 			);
+			if (school.description != '') {
+				const schoolNotes = school.description.split('\n');
+				noteContent.body += '\n- ' + schoolNotes.join('\n- ');
+			}
+			if (school.activities != '') {
+				const schoolActivities = school.activities.split('\n');
+				noteContent.body += '\n- ' + schoolActivities.join('\n- ');
+			}
 			linkedOrgs.push(school.schoolName);
 		}
+
+		noteContent.body += '\n---\n#people';
+
+		noteContent.body = (
+			(('headline' in result) ? `*${result.headline}*\n` : '') +
+			(('summary' in result) ? `${result.summary}\n` : '') +
+			noteContent.body
+		);
+
 		return {
 			code: 0,
 			details: noteContent
@@ -86,7 +121,7 @@ async function fetchLinkedInProfile(username: string, key: string) {
 	}
 }
 
-async function searchLinkedInProfiles(firstName: string, lastName: string, keywords: string, key: string) {
+async function searchLinkedInProfiles(firstName: string, lastName: string, keywords: string, key: string, endpoint: string) {
 	let params = '';
 	if (keywords) {params += `keywords=${keywords}&`;}
 	if (firstName) {params += `firstName=${firstName}&`;}
@@ -100,7 +135,7 @@ async function searchLinkedInProfiles(firstName: string, lastName: string, keywo
 		}
 	}
 
-	const url = `https://linkedin-data-api.p.rapidapi.com/search-people?${params}`;
+	const url = `${endpoint}${params}`;
 	const options = {
 		method: 'GET',
 		headers: {
@@ -180,7 +215,10 @@ export default class LinkedInProfileTool extends Plugin {
 			id: 'linkedin-profile-tool-create-from-search',
 			name: 'Search for a LinkedIn profile to create a new note from',
 			callback: () => {
-				new SearchProfilesModal(this.app, this.settings.apiKey).open();
+				new SearchProfilesModal(
+					this.app, this.settings.apiKey, 
+					this.settings.apiProvider.profileEndpoint, this.settings.apiProvider.searchEndpoint
+				).open();
 			}
 		})
 
@@ -225,11 +263,13 @@ export default class LinkedInProfileTool extends Plugin {
 
 class FromURLModal extends Modal {
 	apiKey: string;
+	profileEndpoint: string;
 
 	constructor(app: App, apiKey: string) {
 		super(app);
 		this.app = app;
 		this.apiKey = apiKey;
+		this.profileEndpoint;
 	}
 
 	onOpen() {
@@ -247,7 +287,7 @@ class FromURLModal extends Modal {
 				.setButtonText('Create')
 				.setCta()
 				.onClick(async () => {
-					const profile = await fetchLinkedInProfile(profileURL, this.apiKey);
+					const profile = await fetchLinkedInProfile(profileURL, this.apiKey, this.profileEndpoint);
 					if (profile.code == 0) {
 						const saveFolder = this.app.vault.getRoot()
 						try {
@@ -273,11 +313,15 @@ class FromURLModal extends Modal {
 
 class SearchProfilesModal extends Modal {
 	apiKey: string;
+	profileEndpoint: string;
+	searchEndpoint: string;
 
-	constructor(app: App, apiKey: string) {
+	constructor(app: App, apiKey: string, profileEndpoint: string, searchEndpoint: string) {
 		super(app);
 		this.app = app;
 		this.apiKey = apiKey;
+		this.profileEndpoint = profileEndpoint;
+		this.searchEndpoint = searchEndpoint;
 	}
 
 	onOpen() {
@@ -315,9 +359,11 @@ class SearchProfilesModal extends Modal {
 						new Notice('Please provide at least one search parameter.');
 						return;
 					}
-					const results = await searchLinkedInProfiles(personFirstName, personLastName, personDetails, this.apiKey);
+					const results = await searchLinkedInProfiles(
+						personFirstName, personLastName, personDetails, this.apiKey, this.searchEndpoint
+					);
 					if (results.code == 0) {
-						new PickProfileModal(this.app, this.apiKey, results.details).open();
+						new PickProfileModal(this.app, this.apiKey, results.details, this.profileEndpoint).open();
 					}
 					this.close();
 				})
@@ -332,12 +378,14 @@ class SearchProfilesModal extends Modal {
 class PickProfileModal extends Modal {
 	apiKey: string;
 	searchResults: any;
+	profileEndpoint: string;
 
-	constructor(app: App, apiKey: string, searchResults: Array<any>) {
+	constructor(app: App, apiKey: string, searchResults: Array<any>, profileEndpoint: string) {
 		super(app);
 		this.app = app;
 		this.apiKey = apiKey;
 		this.searchResults = searchResults;
+		this.profileEndpoint = profileEndpoint;
 	}
 
 	onOpen(){
@@ -351,7 +399,7 @@ class PickProfileModal extends Modal {
 					.setButtonText('Chose Profile')
 					.setCta()
 					.onClick(async () => {
-						const profile = await fetchLinkedInProfile(result.username, this.apiKey);
+						const profile = await fetchLinkedInProfile(result.username, this.apiKey, this.profileEndpoint);
 						if (profile.code == 0) {
 							const saveFolder = this.app.vault.getRoot()
 							try {
