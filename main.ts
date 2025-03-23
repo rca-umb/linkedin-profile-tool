@@ -77,7 +77,7 @@ async function fetchLinkedInProfile(username: string, key: string, endpoint: str
 			let jobNotes = ((job.location != '') ? `\n- ${job.location}` : '');
 			if (job.description != '') {
 				const jobDesc = job.description.split('\n');
-				jobNotes += '- ' + jobDesc.join('\n- ') + '\n';
+				jobNotes += '\n- ' + jobDesc.join('\n- ') + '\n';
 			}
 			noteContent.body = (job.end.year == 0) ? ( // curently working at this position
 				`**${jobTitle}** at ` + (
@@ -129,7 +129,7 @@ async function fetchLinkedInProfile(username: string, key: string, endpoint: str
 		// top of note
 		noteContent.body = (
 			(('headline' in result) ? `*${result.headline}.*\n` : '') +
-			(('summary' in result) ? `${result.summary}\n` : '\n') +
+			(('summary' in result) ? `\n${result.summary}\n` : '\n') +
 			noteContent.body
 		);
 
