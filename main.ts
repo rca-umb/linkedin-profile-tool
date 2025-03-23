@@ -1,5 +1,6 @@
 import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
 import testProfile from './test_format.json';
+import testSearch from './test_search.json';
 
 interface LinkedInAPI {
 	name: string;
@@ -29,6 +30,12 @@ const DEFAULT_SETTINGS: LinkedInProfileToolSettings = {
 			searchEndpoint: 'https://linkedin-api8.p.rapidapi.com/search-people?',
 			profileEndpoint: 'https://linkedin-api8.p.rapidapi.com/?username=',
 			baseURL: 'linkedin-api8.p.rapidapi.com'
+		},
+		'none': {
+			name: 'Development Testing (doesn\'t use API credits)',
+			searchEndpoint: '',
+			profileEndpoint: '',
+			baseURL: ''
 		}
 	}
 }
@@ -164,8 +171,13 @@ async function searchLinkedInProfiles(firstName: string, lastName: string, keywo
 	};
 
 	try {
-		const response = await fetch(url, options);
-		const result = await response.json();
+		let result;
+		if (endpoint === '') {
+			result = testSearch;
+		} else {
+			const response = await fetch(url, options);
+			result = await response.json();
+		}
 		console.log(result);
 		if (result.success) {
 			return {
@@ -201,69 +213,53 @@ export default class LinkedInProfileTool extends Plugin {
 		// Perform additional things with the ribbon
 		ribbonIconEl.addClass('my-plugin-ribbon-class');
 		*/
-		/* might need this later
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-sample-modal-simple',
-			name: 'Open sample modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
-		});
-		*/
 		// This adds an editor command that can perform some operation on the current editor instance
 		this.addCommand({
-			id: 'linkedin-profile-tool-create-from-url',
-			name: 'Create a new note from LinkedIn profile URL',
-			/* will use this later
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				const selection = editor.getSelection();
-				// name of active file is returned with .md extension
-				const fileName = this.app.workspace.getActiveFile()?.name.slice(0, -3);
-
-			}
-			*/
+			id: 'linkedin-profile-tool-from-url',
+			name: 'Get a LinkedIn profile by username',
 			callback: () => {
+				const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
 				new FromURLModal(
 					this.app, this.settings.apiKey, 
 					this.settings.apiHostDetails[this.settings.apiHost].profileEndpoint,
-					this.settings.apiHostDetails[this.settings.apiHost].baseURL
+					this.settings.apiHostDetails[this.settings.apiHost].baseURL,
+					activeView?.editor
 				).open();
 			}
-
 		});
 
 		// Open a modal to search for a profile to pull data from
 		this.addCommand({
-			id: 'linkedin-profile-tool-create-from-search',
-			name: 'Search for a LinkedIn profile to create a new note from',
+			id: 'linkedin-profile-tool-search',
+			name: 'Search for a LinkedIn profile',
 			callback: () => {
+				const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
 				new SearchProfilesModal(
 					this.app, this.settings.apiKey, 
 					this.settings.apiHostDetails[this.settings.apiHost].profileEndpoint, 
 					this.settings.apiHostDetails[this.settings.apiHost].searchEndpoint,
-					this.settings.apiHostDetails[this.settings.apiHost].baseURL
+					this.settings.apiHostDetails[this.settings.apiHost].baseURL,
+					activeView?.editor
 				).open();
 			}
-		})
+		});
 
 		// Tests the format by pulling from a test file
-		this.addCommand({
-			id: 'linkedin-profile-tool-create-from-test',
-			name: 'Create a new note from test profile (doesn\'t use API credits)',
-			callback: async () => {
-				const profile = await fetchLinkedInProfile('', '', '','');
-				const saveFolder = this.app.vault.getRoot();
-				try {
-					this.app.vault.create(`${saveFolder.path}/${profile.details.title}.md`, profile.details.body);
-				}
-				catch (error) {
-					console.log(error);
-				}
-				new Notice(`Note successfully created for ${profile.details.title}`);
-			},
-
-		})
+		//this.addCommand({
+		//	id: 'linkedin-profile-tool-create-from-test',
+		//	name: 'Create a new note from test profile (doesn\'t use API credits)',
+		//	callback: async () => {
+		//		const profile = await fetchLinkedInProfile('', '', '','');
+		//		const saveFolder = this.app.vault.getRoot();
+		//		try {
+		//			this.app.vault.create(`${saveFolder.path}/${profile.details.title}.md`, profile.details.body);
+		//		}
+		//		catch (error) {
+		//			console.log(error);
+		//		}
+		//		new Notice(`Note successfully created for ${profile.details.title}`);
+		//	},
+		//})
 
 		/* might need this added checking later
 		// This adds a complex command that can check whether the current state of the app allows execution of the command
@@ -308,28 +304,31 @@ class FromURLModal extends Modal {
 	apiKey: string;
 	profileEndpoint: string;
 	baseURL: string;
+	editor?: Editor;
 
-	constructor(app: App, apiKey: string, profileEndpoint: string, baseURL: string) {
+	constructor(app: App, apiKey: string, profileEndpoint: string, baseURL: string, editor?: Editor) {
 		super(app);
 		this.app = app;
 		this.apiKey = apiKey;
 		this.profileEndpoint = profileEndpoint;
 		this.baseURL = baseURL;
+		this.editor = editor;
 	}
 
 	onOpen() {
-		this.setTitle('Create a new note from a LinkedIn profile URL');
+		this.setTitle('Get LinkedIn profile data by username');
 		let profileURL = '';
 		new Setting(this.contentEl)
-			.setName('Profile URL')
+			.setName('Profile Username')
+			.setDesc('This can be found in the URL of the profile.')
 			.addText(text =>
 				text.onChange(value => {
 					profileURL = value;
 				})
 			);
-		new Setting(this.contentEl)
+		let buttons = new Setting(this.contentEl)
 			.addButton(btn => btn
-				.setButtonText('Create')
+				.setButtonText('Create new note')
 				.setCta()
 				.onClick(async () => {
 					const profile = await fetchLinkedInProfile(profileURL, this.apiKey, this.profileEndpoint, this.baseURL);
@@ -348,6 +347,21 @@ class FromURLModal extends Modal {
 					this.close();
 				})
 			);
+		if (this.editor) {
+			buttons.addButton(btn => btn
+				.setButtonText('Insert at cursor')
+				.setCta()
+				.onClick(async () => {
+					const profile = await fetchLinkedInProfile(profileURL, this.apiKey, this.profileEndpoint, this.baseURL);
+					if (profile.code == 0) {
+						this.editor!.replaceSelection(profile.details.body);
+					} else {
+						new Notice(`Error fetching profile data: ${profile.details}`, 0);
+					}
+					this.close();
+				})
+			);
+		}
 	}
 
 	onClose() {
@@ -361,18 +375,20 @@ class SearchProfilesModal extends Modal {
 	profileEndpoint: string;
 	searchEndpoint: string;
 	baseURL: string;
+	editor?: Editor;
 
-	constructor(app: App, apiKey: string, profileEndpoint: string, searchEndpoint: string, baseURL: string) {
+	constructor(app: App, apiKey: string, profileEndpoint: string, searchEndpoint: string, baseURL: string, editor?: Editor) {
 		super(app);
 		this.app = app;
 		this.apiKey = apiKey;
 		this.profileEndpoint = profileEndpoint;
 		this.searchEndpoint = searchEndpoint;
 		this.baseURL = baseURL;
+		this.editor = editor;
 	}
 
 	onOpen() {
-		this.setTitle('Search for a LinkedIn profile to create a new note from');
+		this.setTitle('Search for a LinkedIn profile');
 		let personFirstName = '';
 		let personLastName = '';
 		let personDetails = '';
@@ -410,7 +426,7 @@ class SearchProfilesModal extends Modal {
 						personFirstName, personLastName, personDetails, this.apiKey, this.searchEndpoint, this.baseURL
 					);
 					if (results.code == 0) {
-						new PickProfileModal(this.app, this.apiKey, results.details, this.profileEndpoint, this.baseURL).open();
+						new PickProfileModal(this.app, this.apiKey, results.details, this.profileEndpoint, this.baseURL, this.editor).open();
 					}
 					this.close();
 				})
@@ -427,19 +443,22 @@ class PickProfileModal extends Modal {
 	searchResults: any;
 	profileEndpoint: string;
 	baseURL: string;
+	editor?: Editor;
 
-	constructor(app: App, apiKey: string, searchResults: Array<any>, profileEndpoint: string, baseURL: string) {
+	constructor(app: App, apiKey: string, searchResults: Array<any>, profileEndpoint: string, baseURL: string, editor?: Editor) {
 		super(app);
 		this.app = app;
 		this.apiKey = apiKey;
 		this.searchResults = searchResults;
 		this.profileEndpoint = profileEndpoint;
 		this.baseURL = baseURL;
+		this.editor = editor;
 	}
 
 	onOpen(){
-		this.setTitle('Select which profile to create a new note from');
+		this.setTitle('Select which profile to use');
 		console.log(this.searchResults);
+		let chosenProfile: any;
 		for (const result of this.searchResults) {
 			new Setting(this.contentEl)
 				.setName(`${result.fullName}`)
@@ -447,23 +466,46 @@ class PickProfileModal extends Modal {
 				.addButton(btn => btn
 					.setButtonText('Chose Profile')
 					.setCta()
-					.onClick(async () => {
-						const profile = await fetchLinkedInProfile(result.username, this.apiKey, this.profileEndpoint, this.baseURL);
-						if (profile.code == 0) {
-							const saveFolder = this.app.vault.getRoot()
-							try {
-								this.app.vault.create(`${saveFolder.path}/${profile.details.title}.md`, profile.details.body);
-								new Notice(`Note successfully created for ${profile.details.title}`);
-							}
-							catch (error) {
-								console.log(error);
-							}
-						} else {
-							new Notice(`Error fetching profile data: ${profile.details}`, 0);
-						}
-						this.close();
+					.onClick(() => {
+						chosenProfile = result;
 					})
 				);
+		}
+		let buttons = new Setting(this.contentEl)
+			.addButton(btn => btn
+				.setButtonText('Create new note')
+				.setCta()
+				.onClick(async () => {
+					const profile = await fetchLinkedInProfile(chosenProfile.username, this.apiKey, this.profileEndpoint, this.baseURL);
+					if (profile.code == 0) {
+						const saveFolder = this.app.vault.getRoot()
+						try {
+							this.app.vault.create(`${saveFolder.path}/${profile.details.title}.md`, profile.details.body);
+							new Notice(`Note successfully created for ${profile.details.title}`);
+						}
+						catch (error) {
+							console.log(error);
+						}
+					} else {
+						new Notice(`Error fetching profile data: ${profile.details}`, 0);
+					}
+					this.close();
+				}),
+			);
+		if (this.editor) {
+			buttons.addButton(btn => btn
+				.setButtonText('Insert at cursor')
+				.setCta()
+				.onClick(async () => {
+					const profile = await fetchLinkedInProfile(chosenProfile.username, this.apiKey, this.profileEndpoint, this.baseURL);
+					if (profile.code == 0) {
+						this.editor!.replaceSelection(profile.details.body);
+					} else {
+						new Notice(`Error fetching profile data: ${profile.details}`, 0);
+					}
+					this.close();
+				})
+			);
 		}
 	}
 
@@ -502,7 +544,8 @@ class LinkedInProfileToolSettingTab extends PluginSettingTab {
 			.addDropdown(dropdown => dropdown
 				.addOptions({
 					'rockapi': this.plugin.settings.apiHostDetails['rockapi'].name,
-					'rockapi-cheap': this.plugin.settings.apiHostDetails['rockapi-cheap'].name
+					'rockapi-cheap': this.plugin.settings.apiHostDetails['rockapi-cheap'].name,
+					'none': this.plugin.settings.apiHostDetails['none'].name
 				})
 				.setValue(this.plugin.settings.apiHost)
 				.onChange(async (value) => {

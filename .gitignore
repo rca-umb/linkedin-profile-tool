@@ -21,5 +21,6 @@ data.json
 # Exclude macOS Finder (System Explorer) View States
 .DS_Store
 
-# Test file for not using up API calls
+# Test files for not using up API calls
 test_format.json
+test_search.json
